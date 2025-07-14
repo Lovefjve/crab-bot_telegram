@@ -1,0 +1,22 @@
+[
+  {
+    "key": "tanthu1",
+    "number": 99,
+    "money": 10000,
+    "user": [
+      {
+        "userID": 5351815121
+      }
+    ]
+  },
+  {
+    "key": "sinhnhatad",
+    "number": 199,
+    "money": 50000,
+    "user": [
+      {
+        "userID": 5351815121
+      }
+    ]
+  }
+]
