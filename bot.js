@@ -91,3 +91,6 @@ bot.onText(/^\/id$/, (msg) => {
 // Tự động gửi tin nhắn
 const startAutoSend = require('./utils/autosend');
 startAutoSend(bot);
+
+const { startAutoTarget } = require('./utils/autosend-target');
+startAutoTarget(bot);

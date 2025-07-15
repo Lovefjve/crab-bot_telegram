@@ -8,30 +8,41 @@ const loadData = () => JSON.parse(fs.readFileSync(filePath));
 const saveData = (data) => fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 
 function parseDate(str) {
-  const [d, m, y] = str.split('/').map(Number);
-  if (!d || !m || !y) return null;
-  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  const parts = str.split('/');
+  if (parts.length !== 3) return null;
+  const [d, m, y] = parts.map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
 }
 
 function formatDate(date) {
-  return new Date(date).toLocaleDateString('vi-VN');
+  return new Date(date).toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
 function daysBetween(date1, date2) {
-  const d1 = new Date(date1.setHours(0, 0, 0, 0));
-  const d2 = new Date(date2.setHours(0, 0, 0, 0));
-  return Math.floor((d2 - d1) / (1000 * 60 * 60 * 24));
+  const d1 = new Date(date1.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+  const d2 = new Date(date2.toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+  d1.setHours(0, 0, 0, 0);
+  d2.setHours(0, 0, 0, 0);
+  return Math.floor((d1 - d2) / (1000 * 60 * 60 * 24));
+}
+
+function getVietnamNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
 }
 
 function sortTargets(targets) {
-  const now = new Date();
+  const now = getVietnamNow();
   return targets.slice().sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
-    return new Date(a.due) - new Date(b.due);
+    const dueA = new Date(a.due);
+    const dueB = new Date(b.due);
+    const leftA = daysBetween(dueA, now);
+    const leftB = daysBetween(dueB, now);
+    return leftA - leftB;
   });
 }
 
-const sessionLists = new Map(); // Lưu danh sách đã gửi theo chatId
+const sessionLists = new Map();
 
 module.exports = {
   run: async ({ bot, msg, args }) => {
@@ -42,54 +53,55 @@ module.exports = {
 
     const command = args[0];
 
-    // /target add
     if (command === 'add') {
-      const input = args.slice(1).join(' ');
-      const lastPipe = input.lastIndexOf('|');
-      if (lastPipe === -1) return bot.sendMessage(chatId, '❗ Dùng: /target add [mục tiêu]|[dd/mm/yyyy]');
+      const rest = args.slice(1).join(' ');
+      const lastPipeIndex = rest.lastIndexOf('|');
+      if (lastPipeIndex === -1) return bot.sendMessage(chatId, '❗ Dùng: /target add [nội_dung]|[dd/mm/yyyy]');
 
-      const goal = input.slice(0, lastPipe).trim();
-      const dateStr = input.slice(lastPipe + 1).trim();
+      const goal = rest.slice(0, lastPipeIndex).trim();
+      const dateStr = rest.slice(lastPipeIndex + 1).trim();
+      if (!goal || !dateStr) return bot.sendMessage(chatId, '❗ Dùng: /target add [nội_dung]|[dd/mm/yyyy]');
 
-      const dueDate = parseDate(dateStr);
-      if (!dueDate || isNaN(dueDate)) return bot.sendMessage(chatId, '❌ Ngày không hợp lệ. Dùng định dạng dd/mm/yyyy.');
+      const date = parseDate(dateStr);
+      if (!date || isNaN(date)) return bot.sendMessage(chatId, '❌ Ngày không hợp lệ. Dùng định dạng dd/mm/yyyy.');
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (dueDate < today) return bot.sendMessage(chatId, '⚠️ Không thể đặt mục tiêu ở ngày đã qua.');
+      const nowVN = getVietnamNow();
+      const todayVN = new Date(Date.UTC(nowVN.getFullYear(), nowVN.getMonth(), nowVN.getDate()));
+      if (date < todayVN) return bot.sendMessage(chatId, '⚠️ Không thể đặt mục tiêu ở ngày đã qua.');
 
       data[userId].push({
         goal,
-        created: new Date().toISOString(),
-        due: dueDate.toISOString(),
-        done: false
+        created: getVietnamNow().toISOString(),
+        due: date.toISOString(),
+        done: null
       });
+
       saveData(data);
       return bot.sendMessage(chatId, '✅ Đã thêm mục tiêu mới.');
     }
 
-    // /target list
+    const now = getVietnamNow();
+
     if (command === 'list') {
       const list = sortTargets(data[userId]);
-      if (!list.length) return bot.sendMessage(chatId, '📭 Bạn chưa có mục tiêu nào.');
+      if (list.length === 0) return bot.sendMessage(chatId, '📭 Bạn chưa có mục tiêu nào.');
 
-      const now = new Date();
-      const output = list.map((t, i) => {
-        const created = new Date(t.created);
+      const lines = list.map((t, i) => {
         const due = new Date(t.due);
+        const created = new Date(t.created);
+        const daysLeft = daysBetween(due, now);
         let note = '';
 
         if (t.done) {
-          const doneAt = new Date(t.done);
-          const diff = daysBetween(due, doneAt);
-          if (diff < 0) note = `✅ Đã hoàn thành sớm ${-diff} ngày`;
-          else if (diff === 0) note = `✅ Hoàn thành đúng hạn`;
-          else note = `✅ Hoàn thành trễ ${diff} ngày`;
+          const doneDate = new Date(t.done);
+          const diff = daysBetween(due, doneDate);
+          if (diff > 0) note = `✅ Hoàn thành sớm ${diff} ngày`;
+          else if (diff === 0) note = '✅ Hoàn thành đúng hạn';
+          else note = `✅ Hoàn thành trễ ${-diff} ngày`;
         } else {
-          const diff = daysBetween(now, due);
-          if (diff < 0) note = `⏰ Quá hạn ${-diff} ngày`;
-          else if (diff === 0) note = `📍 Hết hạn hôm nay`;
-          else note = `📅 Còn ${diff} ngày`;
+          if (daysLeft < 0) note = `⏰ Quá hạn ${-daysLeft} ngày`;
+          else if (daysLeft === 0) note = `📍 Hết hạn hôm nay`;
+          else note = `📅 Còn ${daysLeft} ngày`;
         }
 
         return `#${i + 1} ${t.goal}
@@ -100,85 +112,76 @@ module.exports = {
       sessionLists.set(chatId, list);
       return bot.sendMessage(chatId, `🎯 Danh sách mục tiêu:
 
-${output.join('\n\n')}`);
+${lines.join('\n\n')}`);
     }
 
-    // Handle reply message
     if (msg.reply_to_message && msg.reply_to_message.text) {
-      const replyIndex = parseInt(msg.text.trim());
-      if (isNaN(replyIndex)) return;
+      const replyNumber = parseInt(msg.text.trim());
+      if (isNaN(replyNumber)) return;
 
+      const index = replyNumber - 1;
       const session = sessionLists.get(chatId);
-      if (!session || !session[replyIndex - 1]) return bot.sendMessage(chatId, '❌ Số thứ tự không hợp lệ.');
-
-      const target = session[replyIndex - 1];
-      const realIndex = data[userId].findIndex(t => t.goal === target.goal && t.due === target.due);
-
-      if (realIndex === -1) return bot.sendMessage(chatId, '❌ Không tìm thấy mục tiêu.');
-
-      if (command === 'done') {
-        if (data[userId][realIndex].done) return bot.sendMessage(chatId, '✅ Mục tiêu đã hoàn thành.');
-        data[userId][realIndex].done = new Date().toISOString();
-        saveData(data);
-
-        const doneAt = new Date(data[userId][realIndex].done);
-        const due = new Date(data[userId][realIndex].due);
-        const diff = daysBetween(due, doneAt);
-        let note = diff === 0 ? '✅ Hoàn thành đúng hạn'
-          : diff < 0 ? `✅ Đã hoàn thành sớm ${-diff} ngày`
-          : `✅ Hoàn thành trễ ${diff} ngày`;
-
-        return bot.sendMessage(chatId, `🎉 Đã đánh dấu hoàn thành: ${target.goal}\n${note}`);
+      if (!session || index < 0 || index >= session.length) {
+        return bot.sendMessage(chatId, '❌ Số thứ tự không hợp lệ.');
       }
+
+      const target = session[index];
+      const userTargets = data[userId];
+      const realIndex = userTargets.findIndex(t => t.goal === target.goal && t.due === target.due);
+      if (realIndex === -1) return bot.sendMessage(chatId, '❌ Không tìm thấy mục tiêu trong dữ liệu.');
+
+      const due = new Date(userTargets[realIndex].due);
 
       if (command === 'del') {
-        const removed = data[userId].splice(realIndex, 1);
+        const removed = userTargets.splice(realIndex, 1);
+        saveData(data);
+        let note = '';
+        if (removed[0].done) {
+          const doneDate = new Date(removed[0].done);
+          const diff = daysBetween(due, doneDate);
+          if (diff > 0) note = `✅ (Hoàn thành sớm ${diff} ngày)`;
+          else if (diff === 0) note = '✅ (Hoàn thành đúng hạn)';
+          else note = `✅ (Hoàn thành trễ ${-diff} ngày)`;
+        }
+        return bot.sendMessage(chatId, `🗑️ Đã xoá mục tiêu: ${removed[0].goal}\n${note}`);
+      }
+
+      if (command === 'done') {
+        if (userTargets[realIndex].done) return bot.sendMessage(chatId, '✅ Mục tiêu đã hoàn thành trước đó.');
+        userTargets[realIndex].done = getVietnamNow().toISOString();
         saveData(data);
 
-        const due = new Date(removed[0].due);
-        const created = new Date(removed[0].created);
-        const now = new Date();
+        const doneDate = new Date(userTargets[realIndex].done);
+        const diff = daysBetween(due, doneDate);
         let note = '';
+        if (diff > 0) note = `✅ Hoàn thành sớm ${diff} ngày`;
+        else if (diff === 0) note = '✅ Hoàn thành đúng hạn';
+        else note = `✅ Hoàn thành trễ ${-diff} ngày`;
 
-        if (removed[0].done) {
-          const doneAt = new Date(removed[0].done);
-          const diff = daysBetween(due, doneAt);
-          if (diff < 0) note = `✅ Đã hoàn thành sớm ${-diff} ngày`;
-          else if (diff === 0) note = `✅ Hoàn thành đúng hạn`;
-          else note = `✅ Hoàn thành trễ ${diff} ngày`;
-        } else {
-          const diff = daysBetween(now, due);
-          if (diff < 0) note = `⏰ Quá hạn ${-diff} ngày`;
-          else if (diff === 0) note = `📍 Hết hạn hôm nay`;
-          else note = `📅 Còn ${diff} ngày`;
-        }
-
-        return bot.sendMessage(chatId, `🗑️ Đã xoá: ${removed[0].goal}\n🔹 Bắt đầu: ${formatDate(created)} | 🎯 Hạn: ${formatDate(due)}\n🔖 ${note}`);
+        return bot.sendMessage(chatId, `🎉 Đánh dấu hoàn thành: ${userTargets[realIndex].goal}\n${note}`);
       }
     }
 
-    // /target del
-    if (command === 'del') {
-      const list = sortTargets(data[userId]);
-      if (!list.length) return bot.sendMessage(chatId, '📭 Không có mục tiêu để xoá.');
+    if (command === 'del' || command === 'done') {
+      const list = sortTargets(data[userId]).filter(t => command === 'del' || !t.done);
+      if (list.length === 0) return bot.sendMessage(chatId, command === 'del' ? '📭 Không có mục tiêu nào để xoá.' : '🎉 Bạn đã hoàn thành tất cả mục tiêu!');
 
+      sessionLists.set(chatId, list);
       const text = list.map((t, i) => {
         const due = new Date(t.due);
         const created = new Date(t.created);
-        const now = new Date();
+        const daysLeft = daysBetween(due, now);
         let note = '';
-
         if (t.done) {
-          const doneAt = new Date(t.done);
-          const diff = daysBetween(due, doneAt);
-          if (diff < 0) note = `✅ Đã hoàn thành sớm ${-diff} ngày`;
-          else if (diff === 0) note = `✅ Hoàn thành đúng hạn`;
-          else note = `✅ Hoàn thành trễ ${diff} ngày`;
+          const doneDate = new Date(t.done);
+          const diff = daysBetween(due, doneDate);
+          if (diff > 0) note = `✅ Hoàn thành sớm ${diff} ngày`;
+          else if (diff === 0) note = '✅ Hoàn thành đúng hạn';
+          else note = `✅ Hoàn thành trễ ${-diff} ngày`;
         } else {
-          const diff = daysBetween(now, due);
-          if (diff < 0) note = `⏰ Quá hạn ${-diff} ngày`;
-          else if (diff === 0) note = `📍 Hết hạn hôm nay`;
-          else note = `📅 Còn ${diff} ngày`;
+          if (daysLeft < 0) note = `⏰ Quá hạn ${-daysLeft} ngày`;
+          else if (daysLeft === 0) note = `📍 Hết hạn hôm nay`;
+          else note = `📅 Còn ${daysLeft} ngày`;
         }
 
         return `#${i + 1} ${t.goal}
@@ -186,39 +189,7 @@ ${output.join('\n\n')}`);
 🔖 ${note}`;
       });
 
-      sessionLists.set(chatId, list);
-      return bot.sendMessage(chatId, `🗑️ Mục tiêu hiện có:
-
-${text.join('\n\n')}
-
-👉 Reply tin nhắn này với số để xoá.`);
-    }
-
-    // /target done
-    if (command === 'done') {
-      const list = sortTargets(data[userId]).filter(t => !t.done);
-      if (!list.length) return bot.sendMessage(chatId, '🎉 Bạn đã hoàn thành tất cả mục tiêu!');
-
-      const text = list.map((t, i) => {
-        const due = new Date(t.due);
-        const created = new Date(t.created);
-        const daysLeft = daysBetween(new Date(), due);
-        const note = daysLeft < 0
-          ? `⏰ Quá hạn ${-daysLeft} ngày`
-          : daysLeft === 0
-          ? `📍 Hết hạn hôm nay`
-          : `📅 Còn ${daysLeft} ngày`;
-        return `#${i + 1} ${t.goal}
-🔹 Bắt đầu: ${formatDate(created)} | 🎯 Hạn: ${formatDate(due)}
-🔖 ${note}`;
-      });
-
-      sessionLists.set(chatId, list);
-      return bot.sendMessage(chatId, `🎯 Mục tiêu chưa hoàn thành:
-
-${text.join('\n\n')}
-
-👉 Reply tin nhắn này với số để đánh dấu hoàn thành.`);
+      return bot.sendMessage(chatId, `${command === 'del' ? '🗑️ Mục tiêu hiện có:' : '🎯 Mục tiêu chưa hoàn thành:'}\n\n${text.join('\n\n')}\n\n👉 Reply tin nhắn này với số thứ tự để ${command === 'del' ? 'xoá' : 'đánh dấu hoàn thành'}.`);
     }
 
     return bot.sendMessage(chatId, '❗ Dùng: /target [add/list/del/done]');
