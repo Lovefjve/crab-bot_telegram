@@ -88,9 +88,14 @@ bot.onText(/^\/id$/, (msg) => {
   bot.sendMessage(msg.chat.id, `🆔 User ID của bạn là: ${userId} (${name})`);
 });
 
-// Tự động gửi tin nhắn
+// Tự động gửi tin nhắn lời chào/nhắc nhở
 const startAutoSend = require('./utils/autosend');
 startAutoSend(bot);
 
+// Tự động nhắc nhở target
 const { startAutoTarget } = require('./utils/autosend-target');
 startAutoTarget(bot);
+
+// Tự động gửi bản tin sáng (7h) và tối (22h)
+const startAutoNews = require('./utils/autonews');
+startAutoNews(bot);

@@ -12,12 +12,9 @@
 
 Bot hiện tập trung vào các nhóm chức năng:
 
-- Kinh tế người dùng (money/exp).
-- Điểm danh hằng ngày.
-- Quản lý mục tiêu cá nhân.
-- Quản lý mã quà tặng (gift code).
-- Gửi ảnh/video có tính phí.
-- Gửi tin nhắn tự động theo khung giờ.
+- **Kinh tế & Giải trí**: Money/exp, Điểm danh, Ảnh/Video có phí.
+- **Tiện ích & Tự động hóa**: Quản lý mục tiêu, Tin tức & Podcast cá nhân tự động.
+- **Quản trị**: Quản lý mã quà tặng (Giftcode).
 
 ---
 
@@ -26,16 +23,12 @@ Bot hiện tập trung vào các nhóm chức năng:
 - Runtime: `Node.js`
 - Telegram SDK: `node-telegram-bot-api`
 - HTTP client: `axios`
-- HTML parser: `cheerio`
+- HTML/XML parser: `cheerio` (dùng cho Scraping và RSS)
 - Schedule job: `node-schedule`
+- TTS: Google Translate TTS API (miễn phí)
 - ENV config: `dotenv`
 - File utilities: `fs`, `fs-extra`, `path`
 - ID tạm: `uuid`
-
-Thông tin script chính (từ `package.json`):
-
-- Start: `node bot.js`
-- Entry point: `bot.js`
 
 ---
 
@@ -44,338 +37,84 @@ Thông tin script chính (từ `package.json`):
 ```text
 bot.js
 commands/
-  apivd.js
-  autosend.js
-  daily.js
-  gitcode.js
-  img.js
-  img3.js
-  target.js
+  news.js, vd.js, apivd.js, autosend.js, daily.js, gitcode.js, img.js, img3.js, target.js
 services/
-  currency.js
-  threads.js
+  news.js, tts.js, currency.js, threads.js
 utils/
-  autosend.js
-  autosend-target.js
-  isAdmin.js
+  autonews.js, autosend.js, autosend-target.js, isAdmin.js
 data/
-  admin.json
-  code.json
-  daily.json
-  targets.json
-  threads.json
-  users.json
+  users.json, threads.json, daily.json, targets.json, code.json, admin.json
 src-api/
   img/*.json
-  video/douyin.json
-cache/
+  video/*.json
+cache/ (Chứa file ảnh/video/audio tạm thời)
 ```
 
 ---
 
-## 4) Luồng tổng của hệ thống
+## 4) Chức năng và luồng chi tiết
 
-### 4.1 Luồng khởi động
+### 4.1 `/id` (Tích hợp trong `bot.js`)
+- Trả về User ID và tên người dùng. Dùng để cấu hình Admin hoặc kiểm tra ID cá nhân.
 
-1. `bot.js` đọc `BOT_TOKEN` từ `.env`.
-2. Khởi tạo bot bằng polling.
-3. Quét thư mục `commands/`, `require()` từng file `.js` và map vào object `commands` theo tên file.
-4. Khởi chạy autosend:
-   - `utils/autosend.startAutoSend(bot)`
-   - `utils/autosend-target.startAutoTarget(bot)`
+### 4.2 `/daily` (Điểm danh)
+- Mỗi ngày 1 lần, nhận `+5000$` và `+100 exp`. Có hệ thống tính `streak` (chuỗi ngày).
 
-### 4.2 Luồng xử lý lệnh slash
+### 4.3 `/news` (Tin tức & Podcast)
+- Lấy 5 tin mới nhất từ VnExpress RSS.
+- Sử dụng `services/tts.js` để đọc tóm tắt tin tức.
+- Cơ chế TTS tự động chia nhỏ văn bản dài thành các đoạn < 200 ký tự để vượt giới hạn Google API.
 
-Regex bắt lệnh: `/command args...`
+### 4.4 `/target` (Quản lý mục tiêu)
+- `add`: Thêm mục tiêu + deadline (dd/mm/yyyy).
+- `list`: Xem danh sách, tự động phân loại: còn hạn, hết hạn hôm nay, quá hạn.
+- `done/del`: Đánh dấu hoàn thành hoặc xóa mục tiêu bằng cách reply số thứ tự.
 
-1. Tách `command` và `args`.
-2. Nếu command tồn tại trong map:
-   - ưu tiên gọi `cmd.run({ bot, msg, args })`.
-   - nếu command export function trực tiếp thì gọi function đó.
-3. Bắt lỗi bằng `try/catch` và gửi tin báo lỗi về chat.
+### 4.5 `/img` & `/img3` (Kho ảnh)
+- Lấy 1 hoặc 3 ảnh ngẫu nhiên từ `src-api/img/`.
+- Phí: `300$` (1 ảnh) hoặc `200$/ảnh` (với `/img3`).
+- Tự động thu hồi (xóa) media sau 50-60 giây.
 
-### 4.3 Luồng xử lý tin nhắn thường
+### 4.6 `/vd` & `/apivd` (Video)
+- `/vd`: Lấy video từ kho dữ liệu local (`src-api/video/`).
+- `/apivd`: Lấy video từ API bên ngoài và tự động lưu URL mới vào dữ liệu local.
+- Phí: `300$`. Tự động xóa sau 50 giây.
 
-Với tin nhắn không bắt đầu bằng `/`:
+### 4.7 `/gitcode` (Mã quà tặng)
+- Admin dùng lệnh này để tạo code: `key/luot_nhap/so_tien`.
+- User nhập code bằng cách gửi tin nhắn thường chứa mã code đó (xử lý qua `handleEvent`).
 
-1. Nếu là reply liên quan target (`done`/`del`) thì gọi `commands['target'].run(...)` tương ứng.
-2. Đồng thời chuyển text cho `commands['gitcode'].handleEvent(...)` để nhận code nhập tự do.
-
----
-
-## 5) Chức năng và luồng chi tiết
-
-## 5.1 `/id` (trong `bot.js`)
-
-- Trả về Telegram user id của người gọi lệnh.
-
-### Luồng
-1. Nhận `/id`.
-2. Lấy `msg.from.id` và `first_name`.
-3. Gửi tin nhắn chứa user ID.
+### 4.8 `/autosend` (Bật/tắt tự động)
+- Cho phép User hoặc Nhóm bật/tắt nhận tin nhắn tự động (Lời chào, Target, Tin tức).
 
 ---
 
-## 5.2 `/daily` (file `commands/daily.js`)
+## 5) Luồng tác vụ tự động (Utilities)
 
-- Điểm danh mỗi ngày 1 lần.
-- Reward mặc định: `+5000 money`, `+100 exp`.
+### 5.1 `utils/autonews.js` (Podcast sáng/tối)
+- Chạy vào **07:00** và **22:00** hàng ngày.
+- Tự động tổng hợp tin tức và gửi file Voice tóm tắt cho tất cả ID có bật `autosend`.
 
-### Luồng
-1. Đọc `data/daily.json` để kiểm tra `lastClaim` theo ngày `vi-VN`.
-2. Nếu đã claim hôm nay => báo đã điểm danh.
-3. Nếu chưa:
-   - cập nhật `lastClaim`, tăng `streak`.
-   - cập nhật tiền/exp qua `services/currency`.
-4. Gửi thông báo thành công.
+### 5.2 `utils/autosend.js` (Lời chào định kỳ)
+- Gửi các câu chúc/nhắc nhở cơm nước vào các khung giờ: 06:00, 10:00, 12:00, 14:00, 17:00, 19:00.
 
----
-
-## 5.3 `/gitcode` + nhập code thường (file `commands/gitcode.js`)
-
-### Nhóm chức năng
-- Admin tạo code theo format `code/so_luot/so_tien`.
-- Admin xem list code (`/gitcode list`).
-- User nhập code bằng cách gửi tin nhắn thường đúng key.
-
-### Luồng tạo/list code
-1. Kiểm tra admin trong `data/admin.json`.
-2. `list`: chỉ admin mới xem được.
-3. Tạo code:
-   - validate format.
-   - kiểm tra trùng key.
-   - lưu vào `data/code.json` dạng `{ key, number, money, user: [] }`.
-
-### Luồng nhập code (`handleEvent`)
-1. Bắt tin nhắn thường (không phải slash).
-2. So khớp text với `key` trong `code.json`.
-3. Nếu đã nhập trước đó => chặn.
-4. Nếu hợp lệ:
-   - cộng tiền user.
-   - thêm user vào danh sách đã dùng code.
-   - giảm `number`.
-   - nếu hết lượt thì xoá code.
+### 5.3 `utils/autosend-target.js` (Nhắc nhở mục tiêu)
+- 06:00: Gửi danh sách việc cần làm trong ngày.
+- 23:00: Nhắc nhở kiểm tra mục tiêu chưa hoàn thành.
+- 23:59: Tổng kết và động viên.
 
 ---
 
-## 5.4 `/target` (file `commands/target.js`)
+## 6) Quy ước mở rộng tính năng
 
-### Nhóm chức năng
-- `add`: thêm mục tiêu có deadline.
-- `list`: liệt kê mục tiêu, ưu tiên chưa hoàn thành.
-- `done`: đánh dấu hoàn thành qua cơ chế reply số thứ tự.
-- `del`: xoá mục tiêu qua cơ chế reply số thứ tự.
-
-### Luồng `add`
-1. Parse format: `/target add noi_dung|dd/mm/yyyy`.
-2. Validate ngày và không cho đặt ngày quá khứ.
-3. Lưu vào `data/targets.json` với fields:
-   - `goal`, `created`, `due`, `done`.
-
-### Luồng `list`
-1. Sort mục tiêu theo trạng thái và thời hạn.
-2. Tính trạng thái hiển thị: còn ngày, hết hạn hôm nay, quá hạn, hoàn thành sớm/trễ/đúng hạn.
-3. Lưu danh sách vào `sessionLists` (theo chatId) để phục vụ thao tác reply số.
-
-### Luồng `done` / `del`
-1. Bot gửi danh sách đánh số.
-2. Người dùng reply bằng số thứ tự.
-3. Bot map số thứ tự sang bản ghi thật trong dữ liệu.
-4. Thực hiện đánh dấu hoàn thành hoặc xoá.
+1. **Command mới**: Tạo trong `commands/`, export hàm `run`.
+2. **Dịch vụ mới**: Tạo trong `services/` (VD: AI, Weather).
+3. **Dữ liệu**: Luôn ưu tiên lưu vào `data/` (cấu hình) hoặc `src-api/` (nội dung).
+4. **Media**: Luôn dọn dẹp file trong `cache/` sau khi gửi để tránh đầy bộ nhớ.
 
 ---
 
-## 5.5 `/img` (file `commands/img.js`)
+## 7) Lịch sử cập nhật tài liệu
 
-- Gửi 1 ảnh theo category từ `src-api/img/*.json`.
-- Có trừ tiền: `300`/ảnh.
-- Tự xoá tin nhắn sau `50s`.
-
-### Luồng
-1. Nếu chưa truyền category => trả danh sách category.
-2. Validate category file tồn tại.
-3. Kiểm tra số dư user.
-4. Random 1 URL ảnh trong file JSON.
-5. Tải ảnh về `cache/*.jpg`.
-6. Nếu tải lỗi: fallback parse trang Imgur bằng `cheerio`.
-7. Gửi ảnh + caption.
-8. Trừ tiền user, xoá file tạm, lên lịch thu hồi tin nhắn.
-
----
-
-## 5.6 `/img3` (file `commands/img3.js`)
-
-- Tương tự `/img` nhưng gửi tối đa 3 ảnh/lần.
-- Phí: `200` cho mỗi ảnh gửi thành công.
-- Tự xoá media sau `60s`.
-
-### Luồng
-1. Validate category + số dư tối thiểu.
-2. Random 3 URL không trùng.
-3. Tải từng ảnh, fallback Imgur nếu lỗi.
-4. Tạo `mediaGroup` và gửi bằng `sendMediaGroup`.
-5. Trừ tiền theo số ảnh gửi được thực tế.
-6. Gửi tin nhắn tổng kết chi phí.
-7. Dọn file tạm + thu hồi tin nhắn media.
-
----
-
-## 5.7 `/apivd` (file `commands/apivd.js`)
-
-- Lấy video từ API: `https://api.kuleu.com/api/MP4_xiaojiejie`.
-- Trừ tiền: `300`.
-- Lưu URL vào `src-api/video/douyin.json` **dạng mảng chuỗi** nếu chưa có.
-- Tự xoá tin nhắn video sau `50s`.
-
-### Luồng
-1. Kiểm tra số dư.
-2. Gọi API lấy URL video (hỗ trợ JSON/string/redirect fallback).
-3. Validate tìm được `videoUrl`.
-4. Đọc `src-api/video/douyin.json`:
-   - chuẩn hoá thành mảng chuỗi.
-   - nếu đã tồn tại URL => báo trùng và dừng.
-5. Nếu chưa có: push URL mới và ghi file.
-6. Tải video vào `cache/*.mp4`.
-7. Gửi video + caption.
-8. Trừ tiền, xoá file tạm, thu hồi tin nhắn sau 50s.
-
----
-
-## 5.8 `/autosend` (file `commands/autosend.js`)
-
-- Bật/tắt tin nhắn tự động cho:
-  - user cá nhân (`services/currency`).
-  - group (`services/threads`).
-
-### Luồng
-1. Xác định chat hiện tại là group hay private.
-2. Lấy trạng thái hiện tại `autosend`.
-3. Nếu không có tham số hoặc sai tham số => trả hướng dẫn `on/off`.
-4. Ghi trạng thái mới vào store tương ứng.
-
----
-
-## 6) Luồng tác vụ tự động (utils)
-
-## 6.1 `utils/autosend.js`
-
-- Chạy vòng lặp mỗi 1 giây, so khớp `HH:mm:ss` theo giờ VN.
-- Các mốc gửi mặc định: 06:00, 10:00, 12:00, 14:00, 17:00, 19:00.
-- Gửi cho toàn bộ user + group đã bật autosend.
-
-### Luồng
-1. Lấy giờ VN hiện tại.
-2. Chống gửi trùng cùng giây bằng `lastTime`.
-3. Nếu trùng một mốc trong danh sách messages:
-   - lấy IDs từ `currency.getAllUsersEnabled()` + `threads.getAllEnabled()`.
-   - gửi broadcast từng ID.
-
-## 6.2 `utils/autosend-target.js`
-
-Dùng `node-schedule` với timezone `Asia/Ho_Chi_Minh`:
-
-- `06:00`: gửi danh sách target chưa hoàn thành.
-- `23:00`: nhắc người dùng đánh dấu hoàn thành.
-- `23:59`: tổng kết ngày, động viên + liệt kê mục tiêu quá hạn nếu cần.
-
----
-
-## 7) Data model (JSON)
-
-## 7.1 `data/users.json`
-
-```json
-{
-  "<userId>": {
-    "money": 1000,
-    "exp": 0,
-    "autosend": false
-  }
-}
-```
-
-## 7.2 `data/threads.json`
-
-```json
-{
-  "<chatId>": {
-    "autosend": false
-  }
-}
-```
-
-## 7.3 `data/daily.json`
-
-```json
-{
-  "<userId>": {
-    "lastClaim": "dd/mm/yyyy",
-    "streak": 1
-  }
-}
-```
-
-## 7.4 `data/code.json`
-
-```json
-[
-  {
-    "key": "abc",
-    "number": 10,
-    "money": 1000,
-    "user": [{ "userID": 123 }]
-  }
-]
-```
-
-## 7.5 `data/targets.json`
-
-```json
-{
-  "<userId>": [
-    {
-      "goal": "...",
-      "created": "ISO",
-      "due": "ISO",
-      "done": null
-    }
-  ]
-}
-```
-
-## 7.6 `src-api/video/douyin.json`
-
-```json
-[
-  "https://i.imgur.com/2bgfxp3.mp4",
-  "https://i.imgur.com/7RHMuFO.mp4"
-]
-```
-
----
-
-## 8) Quy ước mở rộng tính năng (để cập nhật sau này)
-
-Khi thêm command mới, nên theo checklist:
-
-1. Tạo file `commands/<name>.js` và export `run({ bot, msg, args })`.
-2. Nếu cần bắt text thường (non-slash), bổ sung `handleEvent` và gọi tại `bot.js`.
-3. Nếu có thu phí, dùng `services/currency` để kiểm tra/trừ tiền.
-4. Nếu có lưu dữ liệu, tạo JSON tương ứng trong `data/` hoặc `src-api/`.
-5. Nếu gửi media tạm, luôn dọn file trong `cache/`.
-6. Nếu cần tin tự động theo giờ, đặt trong `utils/` và gọi từ `bot.js`.
-
----
-
-## 9) Ghi chú vận hành
-
-- Bot đang dùng polling (không webhook).
-- Dữ liệu JSON phù hợp quy mô nhỏ/vừa; nếu mở rộng lớn nên cân nhắc DB (SQLite/PostgreSQL).
-- Một số API media bên ngoài có thể không ổn định; đã có fallback ở một số command (`img`, `img3`, `apivd`).
-
----
-
-## 10) Lịch sử cập nhật tài liệu
-
-- Cập nhật gần nhất: theo trạng thái code hiện tại trên nhánh `master`.
-- Khi đổi logic trong `commands/`, `services/`, `utils/`, cần cập nhật lại file này để đồng bộ.
+- **Cập nhật gần nhất**: Hoàn thiện tài liệu cho toàn bộ các lệnh hiện có.
+- **Người thực hiện**: Crab Bot Assistant.
